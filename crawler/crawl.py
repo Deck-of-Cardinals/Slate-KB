@@ -26,23 +26,23 @@ SKIP_EXTENSIONS = {
     ".mov", ".mp3", ".mp4", ".mpeg", ".mpg", ".odp", ".ods", ".odt", ".ogg",
     ".ogv", ".otf", ".png", ".ppt", ".pptx", ".rar", ".rss", ".svg", ".tar",
     ".tif", ".tiff", ".ttf", ".txt", ".wav", ".webm", ".webp", ".woff", ".woff2",
-    ".xls", ".xlsx", ".xml", ".zip"
+    ".xls", ".xlsx", ".xml", ".zip",
 }
 
-# Keep <form> itself so its labels/help text survive. Interactive controls are removed below.
+# Keep form containers so labels/help text survive. Interactive controls themselves are dropped.
 DROP_TAGS = {
     "script", "style", "noscript", "svg", "canvas", "template",
-    "button", "input", "textarea"
+    "button", "input", "textarea",
 }
 DROP_SECTIONS = {"nav", "header", "footer"}
 KEEP_TAGS = {
     "a", "abbr", "article", "b", "blockquote", "br", "caption", "code", "dd", "del", "details",
     "div", "dl", "dt", "em", "figcaption", "figure", "h1", "h2", "h3", "h4", "h5", "h6",
     "hr", "i", "li", "main", "mark", "ol", "p", "pre", "section", "small", "span", "strong",
-    "sub", "summary", "sup", "table", "tbody", "td", "tfoot", "th", "thead", "tr", "u", "ul"
+    "sub", "summary", "sup", "table", "tbody", "td", "tfoot", "th", "thead", "tr", "u", "ul",
 }
 TRACKING_QUERY_KEYS = {
-    "fbclid", "gclid", "mc_cid", "mc_eid", "utm_campaign", "utm_content", "utm_medium", "utm_source", "utm_term"
+    "fbclid", "gclid", "mc_cid", "mc_eid", "utm_campaign", "utm_content", "utm_medium", "utm_source", "utm_term",
 }
 
 
@@ -69,7 +69,11 @@ def read_json(path: Path) -> dict:
 
 
 def strip_tracking_query(query: str) -> str:
-    pairs = [(k, v) for k, v in parse_qsl(query, keep_blank_values=True) if k.lower() not in TRACKING_QUERY_KEYS]
+    pairs = [
+        (k, v)
+        for k, v in parse_qsl(query, keep_blank_values=True)
+        if k.lower() not in TRACKING_QUERY_KEYS
+    ]
     return urlencode(pairs, doseq=True)
 
 
@@ -77,12 +81,15 @@ def normalize_url(url: str, *, keep_query: bool = True) -> str:
     url = url.strip()
     if not url:
         return ""
+
     parts = urlsplit(url)
     scheme = (parts.scheme or "https").lower()
     netloc = parts.netloc.lower()
     path = re.sub(r"/{2,}", "/", parts.path or "/")
+
     if path != "/":
         path = path.rstrip("/")
+
     query = strip_tracking_query(parts.query) if keep_query else ""
     return urlunsplit((scheme, netloc, path, query, ""))
 
@@ -118,10 +125,10 @@ def parse_sources(path: Path) -> tuple[list[str], list[str]]:
             if not line.endswith("*") or line.count("*") != 1:
                 print(f"WARNING: unsupported wildcard syntax, skipping: {line}", file=sys.stderr)
                 continue
-            prefix = line[:-1]
-            normalized = normalize_url(prefix, keep_query=False)
-            if normalized not in seen_wild:
-                wildcards.append(prefix)
+
+            normalized = normalize_url(line[:-1], keep_query=False)
+            if normalized and normalized not in seen_wild:
+                wildcards.append(line)
                 seen_wild.add(normalized)
         else:
             normalized = normalize_url(line)
@@ -136,8 +143,10 @@ def wildcard_rule(pattern: str) -> tuple[str, str, str]:
     prefix = pattern[:-1]
     p = urlsplit(prefix)
     path_prefix = p.path or "/"
+
     if not path_prefix.endswith("/"):
         path_prefix += "/"
+
     seed_path = path_prefix.rstrip("/") or "/"
     seed = urlunsplit((p.scheme, p.netloc, seed_path, "", ""))
     return p.netloc.lower(), path_prefix, seed
@@ -149,6 +158,34 @@ def matches_rule(url: str, rule: tuple[str, str, str]) -> bool:
     path = p.path or "/"
     root = path_prefix.rstrip("/") or "/"
     return p.netloc.lower() == host and (path == root or path.startswith(path_prefix))
+
+
+def build_exclusion_keys(config: dict) -> set[str]:
+    keys: set[str] = set()
+
+    for raw in config.get("exclude_urls", []) or []:
+        if not isinstance(raw, str):
+            continue
+
+        with_query = normalize_url(raw)
+        without_query = normalize_url(raw, keep_query=False)
+
+        if with_query:
+            keys.add(with_query)
+        if without_query:
+            keys.add(without_query)
+
+    return keys
+
+
+def is_excluded(url: str, exclusion_keys: set[str]) -> bool:
+    if not exclusion_keys:
+        return False
+
+    return (
+        normalize_url(url) in exclusion_keys
+        or normalize_url(url, keep_query=False) in exclusion_keys
+    )
 
 
 def safe_host_folder(host: str) -> str:
@@ -175,12 +212,20 @@ def safe_output_path(url: str) -> str:
     return str(Path("pages", host, *parts, "index.html")).replace(os.sep, "/")
 
 
+def site_base(config: dict) -> str:
+    return config.get("site_base_url", "").rstrip("/") + "/"
+
+
+def mirror_url(base: str, output_path: str) -> str:
+    return base + output_path.lstrip("/")
+
+
 class Fetcher:
     def __init__(self, config: dict):
         self.config = config
         self.session = requests.Session()
         self.session.headers.update({
-            "User-Agent": "Deck-of-Cardinals-Slate-KB/1.1 (+https://github.com/Deck-of-Cardinals/Slate-KB)",
+            "User-Agent": "Deck-of-Cardinals-Slate-KB/1.2 (+https://github.com/Deck-of-Cardinals/Slate-KB)",
             "Accept": "text/html,application/xhtml+xml,application/pdf;q=0.9,*/*;q=0.5",
             "Accept-Language": "en-US,en;q=0.8",
         })
@@ -221,7 +266,6 @@ class Fetcher:
             body = page.content()
             status = response.status if response else None
             return final_url, body, status
-
         finally:
             page.close()
 
@@ -284,7 +328,6 @@ def choose_content_root(soup: BeautifulSoup) -> Tag:
 
     for selector in selectors:
         found = soup.select_one(selector)
-
         if isinstance(found, Tag) and len(" ".join(found.stripped_strings)) >= 150:
             return found
 
@@ -295,7 +338,6 @@ def canonicalize_html(raw_html: str, source_url: str) -> tuple[str, str, list[st
     soup = BeautifulSoup(raw_html, "html5lib")
 
     title = ""
-
     if soup.title and soup.title.string:
         title = " ".join(soup.title.string.split())
 
@@ -341,9 +383,7 @@ def canonicalize_html(raw_html: str, source_url: str) -> tuple[str, str, list[st
         for child in body.contents
         if not isinstance(child, NavigableString) or child.strip()
     )
-
     text_chars = len(" ".join(body.stripped_strings))
-
     return title, content_html, discovered, text_chars
 
 
@@ -353,30 +393,19 @@ def pdf_to_html(data: bytes, source_url: str) -> tuple[str, str, int]:
 
     for i, page in enumerate(reader.pages, start=1):
         text = (page.extract_text() or "").strip()
-
         if not text:
             continue
 
         paras = [x.strip() for x in re.split(r"\n\s*\n", text) if x.strip()]
-
         page_html = "".join(
             f"<p>{html.escape(p).replace(chr(10), '<br>')}</p>"
             for p in paras
         )
-
-        blocks.append(
-            f"<section><h2>Page {i}</h2>{page_html}</section>"
-        )
+        blocks.append(f"<section><h2>Page {i}</h2>{page_html}</section>")
 
     content = "\n".join(blocks)
     title = Path(urlsplit(source_url).path).name or "PDF document"
-
-    text_chars = len(
-        " ".join(
-            BeautifulSoup(content, "html.parser").stripped_strings
-        )
-    )
-
+    text_chars = len(" ".join(BeautifulSoup(content, "html.parser").stripped_strings))
     return title, content, text_chars
 
 
@@ -393,35 +422,18 @@ def youtube_video_id(url: str) -> str | None:
     return None
 
 
-def fetch_youtube_transcript(
-    url: str,
-    session: requests.Session
-) -> tuple[str, str, int] | None:
-
+def fetch_youtube_transcript(url: str, session: requests.Session) -> tuple[str, str, int] | None:
     video_id = youtube_video_id(url)
-
     if not video_id:
         return None
 
     try:
         oembed = session.get(
             "https://www.youtube.com/oembed",
-            params={
-                "url": f"https://www.youtube.com/watch?v={video_id}",
-                "format": "json"
-            },
+            params={"url": f"https://www.youtube.com/watch?v={video_id}", "format": "json"},
             timeout=20,
         )
-
-        title = (
-            oembed.json().get(
-                "title",
-                f"YouTube video {video_id}"
-            )
-            if oembed.ok
-            else f"YouTube video {video_id}"
-        )
-
+        title = oembed.json().get("title", f"YouTube video {video_id}") if oembed.ok else f"YouTube video {video_id}"
     except Exception:
         title = f"YouTube video {video_id}"
 
@@ -430,7 +442,6 @@ def fetch_youtube_transcript(
 
         api = YouTubeTranscriptApi()
         transcript = api.fetch(video_id)
-
         lines = [
             getattr(snippet, "text", "").strip()
             for snippet in transcript
@@ -442,26 +453,17 @@ def fetch_youtube_transcript(
 
         body = (
             "<section><h2>Transcript</h2>"
-            + "".join(
-                f"<p>{html.escape(line)}</p>"
-                for line in lines
-            )
+            + "".join(f"<p>{html.escape(line)}</p>" for line in lines)
             + "</section>"
         )
-
         return title, body, len(" ".join(lines))
-
     except Exception:
         return None
 
 
-def build_document(
-    title: str,
-    source_url: str,
-    fetched_at: str,
-    body_html: str
-) -> str:
-
+def build_document(title: str, source_url: str, fetched_at: str, body_html: str) -> str:
+    # The original URL is retained as plain text for provenance, but it is deliberately
+    # not an anchor. This prevents Slate's crawl preview from mistaking it for a crawl target.
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -478,8 +480,7 @@ th,td{{border:1px solid #bbb;padding:.4rem;vertical-align:top}}
 </head>
 <body>
 <div class="source-meta">
-<strong>Source:</strong>
-<a href="{html.escape(source_url, quote=True)}">{html.escape(source_url)}</a>
+<strong>Original source:</strong> {html.escape(source_url)}
 <br>
 <strong>Mirror refreshed:</strong> {html.escape(fetched_at)}
 </div>
@@ -491,78 +492,61 @@ th,td{{border:1px solid #bbb;padding:.4rem;vertical-align:top}}
 
 def rewrite_links(
     document: str,
-    current_output: str,
     output_map: dict[str, str],
-    keep_source_links: bool
+    base_url: str,
+    keep_source_links: bool,
 ) -> str:
+    """Rewrite links to known mirrored pages as absolute GitHub Pages URLs.
 
+    Links that do not correspond to mirrored knowledge pages can remain as source-site
+    links when keep_source_links is true, but are marked nofollow. They are outside the
+    GitHub-only Slate patterns and therefore are not part of the mirror crawl.
+    """
     soup = BeautifulSoup(document, "html.parser")
-    current_dir = Path(current_output).parent
 
     for a in soup.find_all("a", href=True):
-
-        if a.find_parent(class_="source-meta") is not None:
-            a["rel"] = "nofollow"
-            continue
-
         href = a["href"]
         key = normalize_url(href)
         target = output_map.get(key)
 
         if target:
-            rel = os.path.relpath(
-                target,
-                start=current_dir
-            ).replace(os.sep, "/")
-
-            a["href"] = rel
-
-        elif not keep_source_links:
-            a.unwrap()
-
-        else:
+            a["href"] = mirror_url(base_url, target)
+            a.attrs.pop("rel", None)
+        elif keep_source_links:
             a["rel"] = "nofollow"
+        else:
+            a.unwrap()
 
     return str(soup)
 
 
 def load_existing_manifest(output_dir: Path) -> dict:
     path = output_dir / "_status" / "manifest.json"
-
     if not path.exists():
         return {}
 
     try:
-        return json.loads(
-            path.read_text(encoding="utf-8")
-        )
+        return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return {}
 
 
-def make_index(
-    results: list[Result],
-    generated_at: str,
-    title: str
-) -> str:
-
+def make_index(results: list[Result], generated_at: str, title: str, base_url: str) -> str:
     rows = []
 
-    for r in sorted(
-        results,
-        key=lambda x: x.url.lower()
-    ):
-
+    for r in sorted(results, key=lambda x: x.url.lower()):
         link = (
-            f'<a href="{html.escape(r.output_path or "", quote=True)}">mirror</a>'
+            f'<a href="{html.escape(mirror_url(base_url, r.output_path), quote=True)}">mirror</a>'
             if r.output_path
             else "—"
         )
 
+        # Source URL is text, not a hyperlink, so this administrative page cannot leak
+        # original-site crawl targets if it is ever tested in Slate.
         rows.append(
             "<tr>"
             f"<td>{html.escape(r.status)}</td>"
-            f'<td><a href="{html.escape(r.url, quote=True)}">{html.escape(r.url)}</a></td>'
+            f"<td>{html.escape(r.url)}</td>"
             f"<td>{link}</td>"
             f"<td>{html.escape(r.note or '')}</td>"
             "</tr>"
@@ -589,14 +573,13 @@ This site is an automatically generated, simplified HTML mirror for Slate AI ing
 Last run: <strong>{html.escape(generated_at)}</strong>.
 </p>
 <p>
-The original source URL is shown on every mirrored page.
 Failed refreshes preserve the last successful mirrored copy when one already exists.
 </p>
 <table>
 <thead>
 <tr>
 <th>Status</th>
-<th>Source URL</th>
+<th>Original source</th>
 <th>Mirror</th>
 <th>Note</th>
 </tr>
@@ -610,43 +593,18 @@ Failed refreshes preserve the last successful mirrored copy when one already exi
 """
 
 
-def make_domain_landing(
-    host: str,
-    items: list[Result],
-    generated_at: str
-) -> str:
-
+def make_domain_landing(host: str, items: list[Result], generated_at: str, base_url: str) -> str:
     rows: list[str] = []
 
-    for item in sorted(
-        items,
-        key=lambda x: (
-            (x.title or "").lower(),
-            x.url.lower()
-        )
-    ):
-
+    for item in sorted(items, key=lambda x: ((x.title or "").lower(), x.url.lower())):
         if not item.output_path:
             continue
 
-        host_dir = (
-            Path("pages")
-            / safe_host_folder(host)
-        )
-
-        target = Path(item.output_path)
-
-        rel = os.path.relpath(
-            target,
-            start=host_dir
-        ).replace(os.sep, "/")
-
         label = item.title or item.url
-
+        absolute_mirror = mirror_url(base_url, item.output_path)
         rows.append(
             "<li>"
-            f'<a href="{html.escape(rel, quote=True)}">{html.escape(label)}</a>'
-            f"<br><small>{html.escape(item.url)}</small>"
+            f'<a href="{html.escape(absolute_mirror, quote=True)}">{html.escape(label)}</a>'
             "</li>"
         )
 
@@ -659,19 +617,14 @@ def make_domain_landing(
 <style>
 body{{font-family:Arial,Helvetica,sans-serif;max-width:980px;margin:2rem auto;padding:0 1rem;line-height:1.55;color:#171717}}
 li{{margin-bottom:.8rem}}
-small{{color:#555}}
 </style>
 </head>
 <body>
 <h1>{html.escape(host)}</h1>
+<p>Clean mirrored pages from this source domain for Slate AI ingestion.</p>
 <p>
-Clean mirrored pages from this source domain for Slate AI ingestion.
-</p>
-<p>
-Mirror refreshed:
-<strong>{html.escape(generated_at)}</strong>.
-Pages available:
-<strong>{len(rows)}</strong>.
+Mirror refreshed: <strong>{html.escape(generated_at)}</strong>.<br>
+Pages available: <strong>{len(rows)}</strong>.
 </p>
 <ul>
 {''.join(rows)}
@@ -681,54 +634,29 @@ Pages available:
 """
 
 
-def write_text(
-    path: Path,
-    text: str
-):
-    path.parent.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    path.write_text(
-        text,
-        encoding="utf-8"
-    )
+def write_text(path: Path, text: str):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
 
 
-def prune_orphan_pages(
-    output_dir: Path,
-    keep_paths: set[str]
-) -> int:
-
+def prune_orphan_pages(output_dir: Path, keep_paths: set[str]) -> int:
     pages_dir = output_dir / "pages"
-
     if not pages_dir.exists():
         return 0
 
     removed = 0
 
-    for file_path in list(
-        pages_dir.rglob("*")
-    ):
-
+    for file_path in list(pages_dir.rglob("*")):
         if not file_path.is_file():
             continue
 
-        rel = str(
-            file_path.relative_to(output_dir)
-        ).replace(os.sep, "/")
-
+        rel = str(file_path.relative_to(output_dir)).replace(os.sep, "/")
         if rel not in keep_paths:
             file_path.unlink()
             removed += 1
 
     directories = sorted(
-        [
-            p
-            for p in pages_dir.rglob("*")
-            if p.is_dir()
-        ],
+        [p for p in pages_dir.rglob("*") if p.is_dir()],
         key=lambda p: len(p.parts),
         reverse=True,
     )
@@ -744,380 +672,205 @@ def prune_orphan_pages(
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-
-    parser.add_argument(
-        "--sources",
-        default="sources.txt"
-    )
-
-    parser.add_argument(
-        "--config",
-        default="config.json"
-    )
-
-    parser.add_argument(
-        "--output",
-        default="mirror"
-    )
-
+    parser.add_argument("--sources", default="sources.txt")
+    parser.add_argument("--config", default="config.json")
+    parser.add_argument("--output", default="mirror")
     args = parser.parse_args()
 
     sources_path = Path(args.sources)
     config = read_json(Path(args.config))
     output_dir = Path(args.output)
+    base_url = site_base(config)
+    exclusion_keys = build_exclusion_keys(config)
 
-    output_dir.mkdir(
-        parents=True,
-        exist_ok=True
-    )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "_status").mkdir(parents=True, exist_ok=True)
 
-    (output_dir / "_status").mkdir(
-        parents=True,
-        exist_ok=True
-    )
+    exact, wildcard_patterns = parse_sources(sources_path)
+    rules = [wildcard_rule(p) for p in wildcard_patterns]
 
-    exact, wildcard_patterns = parse_sources(
-        sources_path
-    )
+    prior_manifest = load_existing_manifest(output_dir)
+    prior_by_url: dict[str, dict] = {}
 
-    rules = [
-        wildcard_rule(p)
-        for p in wildcard_patterns
-    ]
+    for item in prior_manifest.get("results", []):
+        raw = item.get("url")
+        if not raw:
+            continue
+        prior_by_url[normalize_url(raw)] = item
 
-    prior_manifest = load_existing_manifest(
-        output_dir
-    )
-
-    prior_by_url = {
-        item.get("url"): item
-        for item in prior_manifest.get(
-            "results",
-            []
-        )
-        if item.get("url")
-    }
-
-    queue: deque[
-        tuple[str, int | None]
-    ] = deque()
-
+    queue: deque[tuple[str, int | None]] = deque()
     queued: set[str] = set()
+    excluded_exact_sources: list[str] = []
 
     for u in exact:
         key = normalize_url(u)
+        if not key:
+            continue
 
-        if key and key not in queued:
-            queue.append(
-                (u, None)
-            )
+        if is_excluded(key, exclusion_keys):
+            excluded_exact_sources.append(key)
+            continue
 
+        if key not in queued:
+            queue.append((u, None))
             queued.add(key)
 
     for idx, rule in enumerate(rules):
         seed = rule[2]
         key = normalize_url(seed)
 
-        if key not in queued:
-            queue.append(
-                (seed, idx)
-            )
+        if not key or is_excluded(key, exclusion_keys):
+            continue
 
+        if key not in queued:
+            queue.append((seed, idx))
             queued.add(key)
 
-    per_rule_count = [
-        0
-        for _ in rules
-    ]
-
-    max_per_rule = int(
-        config.get(
-            "max_pages_per_wildcard",
-            150
-        )
-    )
-
-    max_total = int(
-        config.get(
-            "max_total_pages",
-            1200
-        )
-    )
-
-    delay = float(
-        config.get(
-            "rate_limit_seconds",
-            0.6
-        )
-    )
+    per_rule_count = [0 for _ in rules]
+    max_per_rule = int(config.get("max_pages_per_wildcard", 150))
+    max_total = int(config.get("max_total_pages", 1200))
+    delay = float(config.get("rate_limit_seconds", 0.6))
 
     fetcher = Fetcher(config)
-
     results: list[Result] = []
-
-    docs_by_url: dict[
-        str,
-        tuple[str, str]
-    ] = {}
-
+    docs_by_url: dict[str, tuple[str, str]] = {}
     fetched_urls: set[str] = set()
 
     try:
-        while (
-            queue
-            and len(fetched_urls) < max_total
-        ):
-
+        while queue and len(fetched_urls) < max_total:
             requested_url, originating_rule = queue.popleft()
+            key = normalize_url(requested_url)
 
-            key = normalize_url(
-                requested_url
-            )
-
-            if (
-                not key
-                or key in fetched_urls
-            ):
+            if not key or key in fetched_urls or is_excluded(key, exclusion_keys):
                 continue
 
             fetched_urls.add(key)
-
-            p = urlsplit(
-                requested_url
-            )
-
+            p = urlsplit(requested_url)
             host = p.netloc.lower()
 
-            if (
-                "youtube.com" in host
-                and p.path.startswith("/playlist")
-            ):
-
-                results.append(
-                    Result(
-                        url=key,
-                        output_path=None,
-                        status="unsupported",
-                        note="YouTube playlist expansion is not enabled."
-                    )
-                )
-
+            if "youtube.com" in host and p.path.startswith("/playlist"):
+                results.append(Result(
+                    url=key,
+                    output_path=None,
+                    status="unsupported",
+                    note="YouTube playlist expansion is not enabled.",
+                ))
                 continue
 
             if host == "app.powerbi.com":
-
-                results.append(
-                    Result(
-                        url=key,
-                        output_path=None,
-                        status="unsupported",
-                        note="Interactive Power BI report; no reliable static text extraction."
-                    )
-                )
-
+                results.append(Result(
+                    url=key,
+                    output_path=None,
+                    status="unsupported",
+                    note="Interactive Power BI report; no reliable static text extraction.",
+                ))
                 continue
 
             fetched_at = utc_now()
 
-            output_path = safe_output_path(
-                key
-            )
-
             try:
-                if (
-                    "youtube.com" in host
-                    or host in {
-                        "youtu.be",
-                        "www.youtu.be"
-                    }
-                ):
-
-                    yt = fetch_youtube_transcript(
-                        requested_url,
-                        fetcher.session
-                    )
-
+                if "youtube.com" in host or host in {"youtu.be", "www.youtu.be"}:
+                    yt = fetch_youtube_transcript(requested_url, fetcher.session)
                     if not yt:
-                        results.append(
-                            Result(
-                                url=key,
-                                output_path=None,
-                                status="unsupported",
-                                fetched_at=fetched_at,
-                                note="YouTube transcript unavailable; watch-page UI was not mirrored."
-                            )
-                        )
-
+                        results.append(Result(
+                            url=key,
+                            output_path=None,
+                            status="unsupported",
+                            fetched_at=fetched_at,
+                            note="YouTube transcript unavailable; watch-page UI was not mirrored.",
+                        ))
                         continue
 
                     title, body_html, text_chars = yt
-
-                    document = build_document(
-                        title,
-                        key,
-                        fetched_at,
-                        body_html
-                    )
-
-                    docs_by_url[key] = (
-                        output_path,
-                        document
-                    )
-
-                    results.append(
-                        Result(
-                            url=key,
-                            output_path=output_path,
-                            status="ok",
-                            title=title,
-                            fetched_at=fetched_at,
-                            fetch_method="youtube-transcript",
-                            text_chars=text_chars,
-                        )
-                    )
-
+                    output_path = safe_output_path(key)
+                    document = build_document(title, key, fetched_at, body_html)
+                    docs_by_url[key] = (output_path, document)
+                    results.append(Result(
+                        url=key,
+                        output_path=output_path,
+                        status="ok",
+                        title=title,
+                        fetched_at=fetched_at,
+                        fetch_method="youtube-transcript",
+                        text_chars=text_chars,
+                    ))
                     continue
 
-                final_url, payload, kind, http_status, method = fetcher.get(
-                    requested_url
-                )
+                final_url, payload, kind, http_status, method = fetcher.get(requested_url)
+                final_key = normalize_url(final_url)
 
-                final_key = normalize_url(
-                    final_url
-                )
+                # A source can redirect onto an explicitly excluded URL. Do not mirror it.
+                if is_excluded(final_key, exclusion_keys):
+                    continue
 
                 if kind == "pdf":
-
                     title, body_html, text_chars = pdf_to_html(
-                        payload
-                        if isinstance(payload, bytes)
-                        else payload.encode(),
+                        payload if isinstance(payload, bytes) else payload.encode(),
                         final_url,
                     )
-
-                    out = safe_output_path(
-                        final_key
-                    )
-
-                    document = build_document(
-                        title,
-                        final_key,
-                        fetched_at,
-                        body_html
-                    )
-
-                    docs_by_url[
-                        final_key
-                    ] = (
-                        out,
-                        document
-                    )
-
-                    results.append(
-                        Result(
-                            url=final_key,
-                            output_path=out,
-                            status="ok",
-                            title=title,
-                            fetched_at=fetched_at,
-                            fetch_method=method + "+pdf",
-                            http_status=http_status,
-                            text_chars=text_chars,
-                        )
-                    )
-
+                    out = safe_output_path(final_key)
+                    document = build_document(title, final_key, fetched_at, body_html)
+                    docs_by_url[final_key] = (out, document)
+                    results.append(Result(
+                        url=final_key,
+                        output_path=out,
+                        status="ok",
+                        title=title,
+                        fetched_at=fetched_at,
+                        fetch_method=method + "+pdf",
+                        http_status=http_status,
+                        text_chars=text_chars,
+                    ))
                 else:
-
-                    assert isinstance(
-                        payload,
-                        str
-                    )
-
-                    title, body_html, discovered, text_chars = canonicalize_html(
-                        payload,
-                        final_url
-                    )
+                    assert isinstance(payload, str)
+                    title, body_html, discovered, text_chars = canonicalize_html(payload, final_url)
 
                     if text_chars < 80:
-                        raise RuntimeError(
-                            f"Too little useful text after cleaning ({text_chars} characters)"
-                        )
+                        raise RuntimeError(f"Too little useful text after cleaning ({text_chars} characters)")
 
-                    out = safe_output_path(
-                        final_key
-                    )
+                    out = safe_output_path(final_key)
+                    document = build_document(title, final_key, fetched_at, body_html)
+                    docs_by_url[final_key] = (out, document)
+                    results.append(Result(
+                        url=final_key,
+                        output_path=out,
+                        status="ok",
+                        title=title,
+                        fetched_at=fetched_at,
+                        fetch_method=method,
+                        http_status=http_status,
+                        text_chars=text_chars,
+                    ))
 
-                    document = build_document(
-                        title,
-                        final_key,
-                        fetched_at,
-                        body_html
-                    )
-
-                    docs_by_url[
-                        final_key
-                    ] = (
-                        out,
-                        document
-                    )
-
-                    results.append(
-                        Result(
-                            url=final_key,
-                            output_path=out,
-                            status="ok",
-                            title=title,
-                            fetched_at=fetched_at,
-                            fetch_method=method,
-                            http_status=http_status,
-                            text_chars=text_chars,
-                        )
-                    )
-
+                    # Preserve the original wildcard behavior: all discoverable descendants
+                    # matching each wildcard remain eligible, except exact config exclusions.
                     applicable_rules = [
                         i
                         for i, rule in enumerate(rules)
-                        if matches_rule(
-                            final_key,
-                            rule
-                        )
+                        if matches_rule(final_key, rule)
                     ]
 
-                    if (
-                        originating_rule is not None
-                        and originating_rule not in applicable_rules
-                    ):
-
-                        applicable_rules.append(
-                            originating_rule
-                        )
+                    if originating_rule is not None and originating_rule not in applicable_rules:
+                        applicable_rules.append(originating_rule)
 
                     for href in discovered:
-
-                        discovered_key = normalize_url(
-                            href,
-                            keep_query=False
-                        )
+                        discovered_key = normalize_url(href, keep_query=False)
 
                         if (
                             not discovered_key
                             or discovered_key in queued
                             or discovered_key in fetched_urls
+                            or is_excluded(discovered_key, exclusion_keys)
                         ):
                             continue
 
-                        if not is_discoverable_html_link(
-                            discovered_key
-                        ):
+                        if not is_discoverable_html_link(discovered_key):
                             continue
 
                         matching = [
                             i
                             for i in applicable_rules
-                            if matches_rule(
-                                discovered_key,
-                                rules[i]
-                            )
+                            if matches_rule(discovered_key, rules[i])
                             and per_rule_count[i] < max_per_rule
                         ]
 
@@ -1125,174 +878,79 @@ def main() -> int:
                             continue
 
                         chosen = matching[0]
-
-                        queue.append(
-                            (
-                                discovered_key,
-                                chosen
-                            )
-                        )
-
-                        queued.add(
-                            discovered_key
-                        )
-
-                        per_rule_count[
-                            chosen
-                        ] += 1
+                        queue.append((discovered_key, chosen))
+                        queued.add(discovered_key)
+                        per_rule_count[chosen] += 1
 
             except Exception as exc:
+                prior = prior_by_url.get(key)
+                prior_path = prior.get("output_path") if prior else None
 
-                prior = prior_by_url.get(
-                    key
-                )
-
-                prior_path = (
-                    prior.get("output_path")
-                    if prior
-                    else None
-                )
-
-                if (
-                    prior_path
-                    and (
-                        output_dir
-                        / prior_path
-                    ).exists()
-                ):
-
-                    results.append(
-                        Result(
-                            url=key,
-                            output_path=prior_path,
-                            status="stale",
-                            fetched_at=fetched_at,
-                            note=(
-                                "Refresh failed; retained previous copy. "
-                                f"{type(exc).__name__}: {exc}"
-                            ),
-                        )
-                    )
-
+                if prior_path and (output_dir / prior_path).exists():
+                    results.append(Result(
+                        url=key,
+                        output_path=prior_path,
+                        status="stale",
+                        fetched_at=fetched_at,
+                        note=(
+                            "Refresh failed; retained previous copy. "
+                            f"{type(exc).__name__}: {exc}"
+                        ),
+                    ))
                 else:
-
-                    results.append(
-                        Result(
-                            url=key,
-                            output_path=None,
-                            status="failed",
-                            fetched_at=fetched_at,
-                            note=f"{type(exc).__name__}: {exc}",
-                        )
-                    )
-
+                    results.append(Result(
+                        url=key,
+                        output_path=None,
+                        status="failed",
+                        fetched_at=fetched_at,
+                        note=f"{type(exc).__name__}: {exc}",
+                    ))
             finally:
                 time.sleep(delay)
-
     finally:
         fetcher.close()
 
     output_map = {
-        u: out
-        for u, (
-            out,
-            _doc
-        ) in docs_by_url.items()
+        normalize_url(u): out
+        for u, (out, _doc) in docs_by_url.items()
     }
 
     for item in results:
+        if item.status == "stale" and item.output_path:
+            output_map.setdefault(normalize_url(item.url), item.output_path)
 
-        if (
-            item.status == "stale"
-            and item.output_path
-        ):
+    keep_source_links = bool(config.get("keep_source_links", True))
 
-            output_map.setdefault(
-                normalize_url(
-                    item.url
-                ),
-                item.output_path
-            )
-
-    for _url, (
-        out,
-        doc
-    ) in docs_by_url.items():
-
+    for _url, (out, doc) in docs_by_url.items():
         final_doc = rewrite_links(
             doc,
-            out,
             output_map,
-            bool(
-                config.get(
-                    "keep_source_links",
-                    True
-                )
-            ),
+            base_url,
+            keep_source_links,
         )
-
-        write_text(
-            output_dir / out,
-            final_doc
-        )
+        write_text(output_dir / out, final_doc)
 
     generated_at = utc_now()
-
-    by_host: dict[
-        str,
-        list[Result]
-    ] = {}
+    by_host: dict[str, list[Result]] = {}
 
     for item in results:
-
         if not item.output_path:
             continue
 
-        host = urlsplit(
-            item.url
-        ).netloc.lower()
-
+        host = urlsplit(item.url).netloc.lower()
         if not host:
             continue
 
-        by_host.setdefault(
-            host,
-            []
-        ).append(
-            item
-        )
+        by_host.setdefault(host, []).append(item)
 
-    domain_landing_paths: dict[
-        str,
-        str
-    ] = {}
+    domain_landing_paths: dict[str, str] = {}
 
-    for host, items in sorted(
-        by_host.items()
-    ):
-
-        landing_path = str(
-            Path(
-                "pages",
-                safe_host_folder(host),
-                "index.html"
-            )
-        ).replace(
-            os.sep,
-            "/"
-        )
-
-        domain_landing_paths[
-            host
-        ] = landing_path
-
+    for host, items in sorted(by_host.items()):
+        landing_path = str(Path("pages", safe_host_folder(host), "index.html")).replace(os.sep, "/")
+        domain_landing_paths[host] = landing_path
         write_text(
             output_dir / landing_path,
-            make_domain_landing(
-                host,
-                items,
-                generated_at
-            ),
+            make_domain_landing(host, items, generated_at, base_url),
         )
 
     keep_page_paths = {
@@ -1300,25 +958,13 @@ def main() -> int:
         for item in results
         if item.output_path
     }
+    keep_page_paths.update(domain_landing_paths.values())
 
-    keep_page_paths.update(
-        domain_landing_paths.values()
-    )
-
-    removed_orphans = prune_orphan_pages(
-        output_dir,
-        keep_page_paths
-    )
+    removed_orphans = prune_orphan_pages(output_dir, keep_page_paths)
 
     domain_counts = {
-        host: sum(
-            1
-            for item in items
-            if item.output_path
-        )
-        for host, items in sorted(
-            by_host.items()
-        )
+        host: sum(1 for item in items if item.output_path)
+        for host, items in sorted(by_host.items())
     }
 
     manifest = {
@@ -1326,130 +972,59 @@ def main() -> int:
         "source_file": str(sources_path),
         "exact_source_count": len(exact),
         "wildcard_source_count": len(wildcard_patterns),
+        "configured_exclude_url_count": len(config.get("exclude_urls", []) or []),
+        "excluded_exact_sources": excluded_exact_sources,
         "fetched_or_considered_count": len(results),
         "domain_counts": domain_counts,
         "domain_landing_pages": domain_landing_paths,
         "orphan_pages_removed": removed_orphans,
-        "results": [
-            asdict(r)
-            for r in results
-        ],
+        "results": [asdict(r) for r in results],
     }
 
     write_text(
-        output_dir
-        / "_status"
-        / "manifest.json",
-        json.dumps(
-            manifest,
-            indent=2,
-            ensure_ascii=False
-        ) + "\n",
+        output_dir / "_status" / "manifest.json",
+        json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
     )
-
     write_text(
-        output_dir
-        / "_status"
-        / "heartbeat.txt",
+        output_dir / "_status" / "heartbeat.txt",
         f"Last automated refresh: {generated_at}\n",
     )
-
     write_text(
-        output_dir
-        / "index.html",
+        output_dir / "index.html",
         make_index(
             results,
             generated_at,
-            config.get(
-                "site_title",
-                "Slate Knowledge Mirror"
-            ),
+            config.get("site_title", "Slate Knowledge Mirror"),
+            base_url,
         ),
     )
+    write_text(output_dir / ".nojekyll", "")
+    write_text(output_dir / "robots.txt", "User-agent: *\nAllow: /\n")
 
-    write_text(
-        output_dir
-        / ".nojekyll",
-        ""
-    )
-
-    write_text(
-        output_dir
-        / "robots.txt",
-        "User-agent: *\nAllow: /\n"
-    )
-
-    base = (
-        config.get(
-            "site_base_url",
-            ""
-        ).rstrip("/")
-        + "/"
-    )
-
-    urls = [
-        base
-    ]
+    urls = [base_url]
 
     for item in results:
-
         if item.output_path:
-            urls.append(
-                base
-                + item.output_path
-            )
+            urls.append(mirror_url(base_url, item.output_path))
 
     for landing_path in domain_landing_paths.values():
-
-        urls.append(
-            base
-            + landing_path
-        )
+        urls.append(mirror_url(base_url, landing_path))
 
     sitemap = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
     ]
 
-    for u in sorted(
-        set(urls)
-    ):
+    for u in sorted(set(urls)):
+        sitemap.append(f"  <url><loc>{html.escape(u)}</loc></url>")
 
-        sitemap.append(
-            f"  <url><loc>{html.escape(u)}</loc></url>"
-        )
+    sitemap.append("</urlset>")
+    write_text(output_dir / "sitemap.xml", "\n".join(sitemap) + "\n")
 
-    sitemap.append(
-        "</urlset>"
-    )
-
-    write_text(
-        output_dir
-        / "sitemap.xml",
-        "\n".join(
-            sitemap
-        ) + "\n",
-    )
-
-    ok = sum(
-        r.status == "ok"
-        for r in results
-    )
-
-    stale = sum(
-        r.status == "stale"
-        for r in results
-    )
-
-    failed = sum(
-        r.status == "failed"
-        for r in results
-    )
-
-    unsupported = sum(
-        r.status == "unsupported"
-        for r in results
-    )
+    ok = sum(r.status == "ok" for r in results)
+    stale = sum(r.status == "stale" for r in results)
+    failed = sum(r.status == "failed" for r in results)
+    unsupported = sum(r.status == "unsupported" for r in results)
 
     print(
         "Mirror run complete: "
@@ -1458,6 +1033,7 @@ def main() -> int:
         f"{failed} failed, "
         f"{unsupported} unsupported; "
         f"{len(results)} total results; "
+        f"{len(excluded_exact_sources)} exact source(s) excluded; "
         f"{removed_orphans} orphan page(s) removed"
     )
 
