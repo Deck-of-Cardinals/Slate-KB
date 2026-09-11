@@ -9,5 +9,9 @@
   "minimum_useful_text_chars": 350,
   "max_pages_per_wildcard": 150,
   "max_total_pages": 1200,
-  "keep_source_links": true
+  "keep_source_links": true,
+  "exclude_urls": [
+    "https://student.louisville.edu/office-bursar/bursar-fall-2026-spring-2027-summer-27-tuition/bursar-cost-calculator",
+    "https://engineering.louisville.edu/academicresources/careerservices"
+  ]
 }
