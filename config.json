@@ -1,0 +1,13 @@
+{
+  "site_title": "UofL Slate AI Knowledge Mirror",
+  "site_base_url": "https://deck-of-cardinals.github.io/Slate-KB/",
+  "repository_url": "https://github.com/Deck-of-Cardinals/Slate-KB",
+  "request_timeout_seconds": 35,
+  "rate_limit_seconds": 0.6,
+  "browser_fallback": true,
+  "browser_timeout_seconds": 45,
+  "minimum_useful_text_chars": 350,
+  "max_pages_per_wildcard": 150,
+  "max_total_pages": 1200,
+  "keep_source_links": true
+}
