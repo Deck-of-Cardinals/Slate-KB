@@ -135,6 +135,7 @@ https://online.louisville.edu/program-finder/undergraduate-programs
 https://online.louisville.edu/program-finder/graduate-programs
 https://online.louisville.edu/programs/bachelors/*
 https://online.louisville.edu/programs/masters/*
+https://online.louisville.edu/programs/bachelors/online-bachelor-of-science-in-general-studies
 https://online.louisville.edu/tuition?tab=scholarships
 https://online.louisville.edu/tuition/*
 https://online.louisville.edu/resources/future-students/*
