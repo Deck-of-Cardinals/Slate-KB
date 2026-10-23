@@ -126,6 +126,8 @@ https://louisville.edu/cost-aid/undergraduate-scholarships-aid/paying-college-an
 
 https://louisville.edu/career/about-us/majors-served
 https://louisville.edu/career/about
+https://louisville.edu/about/departments/office-scholarships/*
+https://louisville.scholarshipuniverse.com/public/home?scholarshipType=public&take=10&skip=0
 https://business.louisville.edu/career-services
 https://business.louisville.edu/about
 https://engineering.louisville.edu/academicresources/careerservices/
@@ -135,7 +137,9 @@ https://online.louisville.edu/program-finder/undergraduate-programs
 https://online.louisville.edu/program-finder/graduate-programs
 https://online.louisville.edu/programs/bachelors/*
 https://online.louisville.edu/programs/masters/*
+https://online.louisville.edu/programs/doctoral/*
 https://online.louisville.edu/programs/bachelors/online-bachelor-of-science-in-general-studies
+https://online.louisville.edu/programs/masters/online-master-of-science-in-criminal-justice
 https://online.louisville.edu/tuition?tab=scholarships
 https://online.louisville.edu/tuition/*
 https://online.louisville.edu/resources/future-students/*
